@@ -14,7 +14,6 @@
 #include "edep_sim_phlex/Tracking.hpp"
 
 #include "edep_sim_phlex/GenEventKine.hpp"
-#include "edep_sim_phlex/Observables.hpp"
 #include "edep_sim_phlex/SummaryPersistency.hpp"
 
 #include "EDepSimCreateRunManager.hh"
@@ -70,7 +69,7 @@ namespace edep_sim_phlex {
         std::mutex mtx;
         std::condition_variable cv;
         HepMC3::GenEvent const* input = nullptr; // guarded by mtx
-        phlex_arrow::TableGroup result;          // guarded by mtx
+        TG4Event result;                         // guarded by mtx
         bool job_ready = false;
         bool result_ready = false;
         bool stop = false;
@@ -87,7 +86,7 @@ namespace edep_sim_phlex {
 
         void loop();
         void initialize();
-        phlex_arrow::TableGroup run_one(HepMC3::GenEvent const& ge);
+        TG4Event run_one(HepMC3::GenEvent const& ge);
     };
 
     void Tracking::G4Worker::loop()
@@ -110,7 +109,7 @@ namespace edep_sim_phlex {
             HepMC3::GenEvent const* in = input;
             job_ready = false;
 
-            phlex_arrow::TableGroup out;
+            TG4Event out;
             if (!init_failed && in) {
                 lk.unlock(); // run Geant4 without holding the lock
                 out = run_one(*in);
@@ -192,17 +191,16 @@ namespace edep_sim_phlex {
         ui->ApplyCommand("/edep/update");
     }
 
-    phlex_arrow::TableGroup Tracking::G4Worker::run_one(HepMC3::GenEvent const& ge)
+    TG4Event Tracking::G4Worker::run_one(HepMC3::GenEvent const& ge)
     {
         // Feed the event, then run exactly one Geant4 event (the node owns beamOn; Q4).
         kine->feed_genevent(ge);
         G4UImanager::GetUIpointer()->ApplyCommand("/run/beamOn 1");
 
-        // The persistency manager's Store() has filled the TG4Event summary.
-        // Marshal it into the Q5 OBSERVABLES product (segments + photons Arrow
-        // tables).  The MC-truth (HepMC) and associations layers are follow-on
-        // work (ddm-4nd.5 decision).
-        return to_observables(persistency->summary());
+        // The persistency manager's Store() has filled the TG4Event summary; return
+        // a copy as this node's product.  Converting it to the Q5 observables (Arrow
+        // tables) is a separate downstream node (modules/observables.cpp).
+        return persistency->summary();
     }
 
     Tracking::Tracking(phlex::configuration const& config) : config_(config) {}
@@ -231,11 +229,11 @@ namespace edep_sim_phlex {
         });
     }
 
-    phlex_arrow::TableGroup Tracking::operator()(HepMC3::GenEvent const& ge)
+    TG4Event Tracking::operator()(HepMC3::GenEvent const& ge)
     {
         ensure_started();
 
-        phlex_arrow::TableGroup out;
+        TG4Event out;
         std::exception_ptr ex;
         {
             std::unique_lock<std::mutex> lk(worker_->mtx);

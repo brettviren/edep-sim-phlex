@@ -15,9 +15,10 @@
 //
 // The edep-sim FUNCTION node (ddm-4nd.11): a Phlex transform callable.  It
 // consumes one HepMC3::GenEvent, drives exactly one Geant4 event through
-// edep-sim, and returns the Q5 observables product (an "edep.observables"
-// phlex_arrow::TableGroup with the segments + photons tables; see
-// Observables.hpp).
+// edep-sim, and returns the native edep-sim event summary (TG4Event) as its
+// product.  Turning that TG4Event into the Q5 observables (Arrow tables) is a
+// SEPARATE downstream Phlex node (see modules/observables.cpp + Observables.hpp)
+// so this node stays a pure Geant4/edep-sim concern with no Arrow dependency.
 //
 // THREAD AFFINITY: Geant4's sequential G4RunManager is thread-affine -- the
 // navigator/world it builds live in G4ThreadLocal state.  Phlex runs a node's
@@ -39,10 +40,6 @@
 // static destructors nothing to do.  ~Tracking signals the thread to stop and
 // joins it, so this cleanup completes before the object goes away.
 
-#include "edep_sim_phlex/Data.hpp"
-
-#include "phlex_arrow_common/TableGroup.hpp"
-
 #include "phlex/configuration.hpp"
 
 #include <mutex> // std::once_flag
@@ -50,6 +47,7 @@
 namespace HepMC3 {
     class GenEvent;
 }
+class TG4Event;
 
 namespace edep_sim_phlex {
 
@@ -61,9 +59,9 @@ namespace edep_sim_phlex {
         Tracking(Tracking const&) = delete;
         Tracking& operator=(Tracking const&) = delete;
 
-        // One input GenEvent -> one Geant4 event -> observables product.  Marshals
+        // One input GenEvent -> one Geant4 event -> TG4Event summary.  Marshals
         // the work to the dedicated G4 thread and blocks until it completes.
-        phlex_arrow::TableGroup operator()(HepMC3::GenEvent const& ge);
+        TG4Event operator()(HepMC3::GenEvent const& ge);
 
     private:
         struct G4Worker; // defined in the .cpp; owns the G4 thread + Geant4 objects

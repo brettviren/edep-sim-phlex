@@ -1,8 +1,9 @@
 {
-  // Smoke test: HepMC3 particle gun -> edep-sim tracking -> observer.
+  // Smoke test: HepMC3 particle gun -> edep-sim tracking -> observables -> observer.
   //
   //   hmp_gen_event_gun  fires one 1 GeV muon (+z) per event as a HepMC3::GenEvent.
-  //   esp_tracking       runs it through edep-sim/Geant4 in the example geometry.
+  //   esp_tracking       runs it through edep-sim/Geant4, emitting a TG4Event.
+  //   esp_observables    converts the TG4Event into the edep.observables TableGroup.
   //   esp_tracking_observer  prints the per-event tracking summary ("[edep-smoke] ...").
   //
   // Success indicator: non-zero trajectories/segments in the observer output,
@@ -39,10 +40,15 @@
       gdml: '/home/bviren/dune/xerosere/reference/edep-sim/inputs/example.gdml',
       // physics_list omitted -> edep-sim default (QGSP_BERT + optical)
     },
+    edep_observables: {
+      cpp: 'esp_observables',
+      input_layer: 'event',
+      input_from: 'edep_sim_tracking', // consumes the TG4Event
+    },
     tracking_observer: {
       cpp: 'esp_tracking_observer',
       input_layer: 'event',
-      input_from: 'edep_sim_tracking',
+      input_from: 'edep_observables', // consumes the edep.observables TableGroup
     },
   },
 }

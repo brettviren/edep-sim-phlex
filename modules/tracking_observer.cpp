@@ -18,7 +18,7 @@
 //
 // Config keys:
 //   input_layer  (string, required):        Phlex layer of the observables product.
-//   input_from   (string, optional="edep_sim_tracking"): creator (the tracking
+//   input_from   (string, optional="edep_observables"): creator (the observables
 //                module's instance key in the workflow).
 
 #include "edep_sim_phlex/Data.hpp"
@@ -48,7 +48,7 @@ namespace {
 PHLEX_REGISTER_ALGORITHMS(m, config)
 {
     auto const layer = config.get<std::string>("input_layer");
-    auto const from = config.get<std::string>("input_from", std::string{"edep_sim_tracking"});
+    auto const from = config.get<std::string>("input_from", std::string{"edep_observables"});
 
     m.observe("edep_tracking_observer",
               [](phlex_arrow::TableGroup const& g) {

@@ -14,8 +14,14 @@ All code is in the `edep_sim_phlex` C++ namespace.
 - **`Tracking`** (`edep_sim_phlex/Tracking.hpp`) — the Phlex node, a callable
   class.  It is "`app/edepSim.cc::main()` minus the CLI": it stands up the Geant4
   run manager, geometry (from GDML) and physics from Phlex configuration, and per
-  call feeds one input `GenEvent`, runs one `beamOn`, and returns the tracking
-  result.  Registered as a `phlex` transform in `modules/tracking.cpp`.
+  call feeds one input `GenEvent`, runs one `beamOn`, and returns the native
+  edep-sim event summary (`TG4Event`) as its product.  Registered as a `phlex`
+  transform in `modules/tracking.cpp`.  Converting the `TG4Event` into the Q5
+  observables is a **separate** downstream node (`modules/observables.cpp`), so
+  the tracking node carries no Arrow dependency.
+- **`to_observables`** (`edep_sim_phlex/Observables.hpp`) — converts a `TG4Event`
+  into the `edep.observables` Arrow `TableGroup` (see below).  Registered as its
+  own `phlex` transform in `modules/observables.cpp`.
 - **`GenEventKine`** (`edep_sim_phlex/GenEventKine.hpp`) — the kinematics
   generator.  It is a `G4VPrimaryGenerator` (so edep-sim can drive it) and an
   `IGenEventSink` (so the node can feed it a `HepMC3::GenEvent`).  Injected into
@@ -27,11 +33,12 @@ All code is in the `edep_sim_phlex` C++ namespace.
   convert a `HepMC3::GenEvent` into Geant4 primary vertices/particles.  The
   conversion is delegated here, not implemented inside `GenEventKine`.
 
-## Output product
+## Products
 
-The node emits one `phlex_arrow::TableGroup` (product suffix `observables`,
-type `edep.observables`) — the **observables** layer of the Q5 output decision
-(ddm-4nd.5).  Members:
+The tracking node emits the native edep-sim summary `TG4Event` (product suffix
+`tg4event`).  The downstream observables node consumes that and emits one
+`phlex_arrow::TableGroup` (product suffix `observables`, type `edep.observables`)
+— the **observables** layer of the Q5 output decision (ddm-4nd.5).  Its members:
 
 - `segments` (schema `edep.segments`) — one row per `TG4HitSegment` across all
   sensitive detectors.  Carries the **ionization-electron** count `n_electrons`

@@ -69,6 +69,14 @@ target_link_libraries(esp_tracking PRIVATE
 )
 target_compile_options(esp_tracking PRIVATE -UNDEBUG)
 
+# TG4Event -> Q5 observables (Arrow TableGroup): a separate node from tracking.
+add_library(esp_observables MODULE modules/observables.cpp)
+target_link_libraries(esp_observables PRIVATE
+  edep_sim_phlex
+  phlex::module
+)
+target_compile_options(esp_observables PRIVATE -UNDEBUG)
+
 add_library(esp_tracking_observer MODULE modules/tracking_observer.cpp)
 target_link_libraries(esp_tracking_observer PRIVATE
   edep_sim_phlex
@@ -93,7 +101,7 @@ install(DIRECTORY edep_sim_phlex/
 )
 
 # Phlex MODULE libraries (dlopen only — no EXPORT needed).
-install(TARGETS esp_tracking esp_tracking_observer
+install(TARGETS esp_tracking esp_observables esp_tracking_observer
   LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
 )
 
