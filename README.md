@@ -53,6 +53,23 @@ The tracking node emits the native edep-sim summary `TG4Event` (product suffix
 Units are edep-sim / CLHEP native (mm, MeV, ns), declared in each table's schema
 metadata (`edep.units.{length,energy,time}`).
 
+## Testing
+
+Two workflow smoke tests live under `test/` (both need the gcc15 view and the
+built `hepmc-phlex`, `edep-sim-phlex`, and — for the HDF5 test — `phlex-arrow-hdf`
+plugins):
+
+- **`run-smoke.sh`** (`smoke-gun-tracking.jsonnet`) — gun → tracking →
+  observables → observer.  Passes on non-zero tracking segments, proving Geant4
+  tracked the muon and the `TG4Event` converted to the `edep.observables`
+  `TableGroup`.
+- **`run-smoke-hdf.sh`** (`smoke-gun-tracking-hdf.jsonnet`) — the **full Q5
+  chain** (ddm-6rn): the same graph plus a `phlex_arrow_hdf_output` node, which
+  persists the `edep.observables` `TableGroup` to an HDF5 file via the generic
+  narrow-waist Arrow→HDF5 write path (`phlex-arrow-hdf`).  Passes only when the
+  `.h5` file is written with the `segments`/`photons` tables present.  The Arrow
+  schema metadata (units, `arrow.schema` name/version) survives the round-trip.
+
 ## Dependencies
 
 - **edep-sim** (`EDepSim::edepsim`, `EDepSim::edepsim_io`)
