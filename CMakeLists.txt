@@ -21,6 +21,7 @@ find_package(spdlog REQUIRED)
 find_package(fmt REQUIRED)
 find_package(phlex REQUIRED)
 find_package(phlex_arrow_common CONFIG REQUIRED)
+find_package(edep_arrow CONFIG REQUIRED)
 find_package(Geant4 REQUIRED)
 find_package(EDepSim REQUIRED)
 find_package(HepMC3 REQUIRED)
@@ -55,6 +56,7 @@ target_link_libraries(edep_sim_phlex
     HepMC3::HepMC3
     phlex::core
     phlex_arrow_common::phlex_arrow_common
+    edep_arrow::edep_arrow
     Arrow::arrow_shared
     Boost::json
 )

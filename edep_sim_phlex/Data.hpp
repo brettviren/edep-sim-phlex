@@ -25,13 +25,15 @@
 // name the product's type marker and member tables so the producer and any
 // consumer agree without duplicating string literals.
 
+#include "edep_arrow/Schema.hpp"
+
 namespace edep_sim_phlex {
 
-    // TableGroup type marker for the observables product.
-    inline constexpr char kObservablesType[] = "edep.observables";
-
-    // TableGroup member names.
-    inline constexpr char kSegmentsMember[] = "segments"; // edep.segments table
-    inline constexpr char kPhotonsMember[] = "photons";   // edep.photons table
+    // The edep.* schema conventions are owned by the pure-Arrow edep-arrow
+    // package (ddm-69y.2); re-expose the names this package's producer and
+    // consumers use.
+    using edep_arrow::kObservablesType; // TableGroup type marker
+    using edep_arrow::kSegmentsMember;  // edep.segments table member
+    using edep_arrow::kPhotonsMember;   // edep.photons table member
 
 } // namespace edep_sim_phlex
