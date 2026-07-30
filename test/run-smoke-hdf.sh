@@ -40,6 +40,18 @@ grep -qE '\[edep-smoke\].*segments=[1-9]' "$log" && ok_seg=true
 # makes grep close the pipe on the first match, SIGPIPE-kills h5ls, and with
 # `set -o pipefail` that non-zero status would falsely fail the check.
 h5_contents="$("$view/bin/h5ls" -r "$h5" 2>/dev/null)"
+if ! printf '%s\n' "$h5_contents" | grep -q 'observables/segments/pdg'; then
+    echo "SMOKE TEST FAILED: no segments/pdg dataset in $h5"
+    exit 1
+fi
+# The gun fires a mu- so the dominant segment pdg must be 13.  (Same
+# capture-first dance as h5ls above: grep -q + pipefail SIGPIPE-kills h5dump.)
+pdg_path="$(printf '%s\n' "$h5_contents" | grep -om1 '/event/[^ ]*observables/segments/pdg')"
+pdg_dump="$("$view/bin/h5dump" -d "$pdg_path" "$h5" 2>/dev/null)"
+if ! printf '%s\n' "$pdg_dump" | grep -q '13'; then
+    echo "SMOKE TEST FAILED: segments/pdg carries no muon (13) entries"
+    exit 1
+fi
 if [ -s "$h5" ] && printf '%s\n' "$h5_contents" | grep -q 'observables/segments/n_electrons'; then
     ok_h5=true
     echo "HDF5 written: $h5 ($(stat -c%s "$h5") bytes), segments table present."

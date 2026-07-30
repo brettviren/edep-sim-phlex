@@ -24,6 +24,8 @@
 
 #include "TG4Event.h"
 
+#include <cstdint>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -38,6 +40,15 @@ namespace edep_sim_phlex {
         // One row per TG4HitSegment across all sensitive detectors.
         std::vector<edep_arrow::Segment> segment_rows(const TG4Event& summary)
         {
+            // Track id -> PDG code, for labeling each segment with its
+            // primary_id's particle type.  (Trajectories are nominally indexed
+            // by TrackId but a map avoids relying on that invariant.)
+            std::unordered_map<int, std::int32_t> track_pdg;
+            track_pdg.reserve(summary.Trajectories.size());
+            for (auto const& traj : summary.Trajectories) {
+                track_pdg.emplace(traj.GetTrackId(), traj.GetPDGCode());
+            }
+
             std::vector<edep_arrow::Segment> rows;
             for (auto const& [sd, segments] : summary.SegmentDetectors) {
                 for (auto const& seg : segments) {
@@ -56,6 +67,11 @@ namespace edep_sim_phlex {
 
                     row.track_length = seg.TrackLength;
                     row.primary_id = seg.PrimaryId;
+                    // pdg shares primary_id's heuristic status (ddm-q3y): a
+                    // segment may fold several tracks' deposits.
+                    if (auto it = track_pdg.find(seg.PrimaryId); it != track_pdg.end()) {
+                        row.pdg = it->second;
+                    }
                     row.start_x = seg.Start.X();
                     row.start_y = seg.Start.Y();
                     row.start_z = seg.Start.Z();
