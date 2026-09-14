@@ -39,7 +39,8 @@ add_library(edep_sim_phlex SHARED
   edep_sim_phlex/Convert.cpp
   edep_sim_phlex/GenEventKine.cpp
   edep_sim_phlex/Observables.cpp
-  edep_sim_phlex/Tracking.cpp
+  edep_sim_phlex/Tracking.cpp     # service-based (EDepSim::TrackingService)
+  edep_sim_phlex/TrackingG4.cpp   # original self-contained implementation
 )
 
 target_include_directories(edep_sim_phlex
@@ -50,6 +51,7 @@ target_include_directories(edep_sim_phlex
 
 target_link_libraries(edep_sim_phlex
   PUBLIC
+    EDepSim::edepsim_service
     EDepSim::edepsim
     EDepSim::edepsim_io
     ${Geant4_LIBRARIES}

@@ -15,33 +15,26 @@
 //
 // The edep-sim FUNCTION node (ddm-4nd.11): a Phlex transform callable.  It
 // consumes one HepMC3::GenEvent, drives exactly one Geant4 event through
-// edep-sim, and returns the native edep-sim event summary (TG4Event) as its
-// product.  Turning that TG4Event into the Q5 observables (Arrow tables) is a
-// SEPARATE downstream Phlex node (see modules/observables.cpp + Observables.hpp)
-// so this node stays a pure Geant4/edep-sim concern with no Arrow dependency.
+// edep-sim, and returns the native edep-sim event summary (TG4Event).
 //
-// THREAD AFFINITY: Geant4's sequential G4RunManager is thread-affine -- the
-// navigator/world it builds live in G4ThreadLocal state.  Phlex runs a node's
-// operator() on whatever TBB pool thread is free, which varies across calls over
-// the job.  So this node owns a single dedicated "G4 thread" that performs init
-// and every beamOn; operator() marshals each event to it and blocks for the
-// result.  The dedicated thread is a blocking hand-off, not added concurrency
-// (the calling TBB thread parks while the G4 thread runs), so there is no
-// oversubscription.  Assumes serial invocation (concurrency::serial): at most one
-// operator() in flight.
+// This is the SERVICE-BASED implementation: the thread-affinity discipline
+// (dedicated Geant4 thread, construct/beamOn/destroy all on it) is delegated to
+// edep-sim's reusable EDepSim::TrackingService.  HepMC3 -> Geant4 conversion is
+// done faithfully by installing our own GenEventKine as the service's primary
+// generator (the custom-generator path), so the kinematics go straight from
+// HepMC3::GenEvent to G4PrimaryVertex without a lossy TG4PrimaryVertex hop.
 //
-// The G4 thread, its handshake state, and the Geant4 objects live in a heap
-// G4Worker (see the .cpp).  Crucially, the geometry is created, used AND
-// DESTROYED on that one thread: init, every beamOn, and -- at stop -- emptying
-// Geant4's global geometry stores (G4PhysicalVolumeStore::Clean() etc.) all run
-// there.  Those stores are otherwise torn down by MAIN-thread static destructors
-// at process exit, which would delete worker-built volumes cross-thread and crash
-// (in ~G4PVPlacement/GetRotation); emptying them on the worker first leaves the
-// static destructors nothing to do.  ~Tracking signals the thread to stop and
-// joins it, so this cleanup completes before the object goes away.
+// The public interface matches the original (now `TrackingG4`), so the Phlex
+// module (modules/tracking.cpp) is unchanged.
+//
+// Config keys (same as TrackingG4):
+//   physics_list (string, optional): Geant4 reference physics list.
+//   gdml         (string, optional): detector GDML file.
+//   macro        (string, optional): inline Geant4 macro text (physics tunings).
 
 #include "phlex/configuration.hpp"
 
+#include <memory>
 #include <mutex> // std::once_flag
 
 namespace HepMC3 {
@@ -60,17 +53,15 @@ namespace edep_sim_phlex {
         Tracking& operator=(Tracking const&) = delete;
 
         // One input GenEvent -> one Geant4 event -> TG4Event summary.  Marshals
-        // the work to the dedicated G4 thread and blocks until it completes.
+        // the work to the service's dedicated Geant4 thread and blocks for it.
         TG4Event operator()(HepMC3::GenEvent const& ge);
 
     private:
-        struct G4Worker; // defined in the .cpp; owns the G4 thread + Geant4 objects
+        void ensure_started(); // create + initialize the service, once
 
-        void ensure_started(); // create the worker + start its thread, once
-
-        phlex::configuration config_;
+        struct Impl;                  // holds the service + borrowed generator
+        std::unique_ptr<Impl> impl_;
         std::once_flag started_;
-        G4Worker* worker_ = nullptr; // heap-allocated; stopped, joined and deleted in ~Tracking
     };
 
 } // namespace edep_sim_phlex

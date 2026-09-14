@@ -10,222 +10,99 @@
  */
 
 // edep_sim_phlex/Tracking.cpp
+//
+// Service-based tracking node: the thread affinity is owned by
+// EDepSim::TrackingService, and HepMC3 -> Geant4 conversion is done by our
+// GenEventKine installed as the service's custom primary generator.
 
 #include "edep_sim_phlex/Tracking.hpp"
 
 #include "edep_sim_phlex/GenEventKine.hpp"
-#include "edep_sim_phlex/SummaryPersistency.hpp"
 
-#include "EDepSimCreateRunManager.hh"
-#include "EDepSimUserPrimaryGeneratorAction.hh"
+#include "EDepSimTrackingService.hh"
 #include "TG4Event.h"
 
-#include <G4GeometryManager.hh>
-#include <G4LogicalVolumeStore.hh>
-#include <G4PhysicalVolumeStore.hh>
-#include <G4RunManager.hh>
-#include <G4SolidStore.hh>
-#include <G4UImanager.hh>
+#include <HepMC3/GenEvent.h>
 
-#include <condition_variable>
-#include <exception>
-#include <memory>
 #include <mutex>
 #include <sstream>
-#include <stdexcept>
 #include <string>
-#include <thread>
-#include <utility>
+#include <vector>
 
 namespace {
 
-    // Apply inline Geant4 macro text (as delivered in Phlex config, Q4) one
-    // command per line, skipping blank lines and '#' comments.
-    void apply_macro_text(G4UImanager& ui, const std::string& text)
+    // Split inline Geant4 macro text into one command per line.  The service's
+    // initialize() applies each line and skips blanks/'#' comments, so we only
+    // need to break the blob apart here.
+    std::vector<std::string> split_lines(std::string const& text)
     {
+        std::vector<std::string> lines;
         std::istringstream iss(text);
         std::string line;
         while (std::getline(iss, line)) {
-            const auto first = line.find_first_not_of(" \t\r\n");
-            if (first == std::string::npos) continue; // blank
-            if (line[first] == '#') continue;         // comment
-            ui.ApplyCommand(line);
+            lines.push_back(line);
         }
+        return lines;
     }
 
 } // namespace
 
 namespace edep_sim_phlex {
 
-    // Owns the dedicated Geant4 thread, the single-slot request/response handshake,
-    // and the Geant4 objects.  The Geant4 objects are created, used AND destroyed
-    // only on this one thread -- init, every beamOn, and the final teardown all run
-    // there.  That single-thread discipline is what makes it safe: G4RunManager is
-    // thread-affine (G4ThreadLocal navigator/world), so building on one thread and
-    // running/destroying on another corrupts G4 and crashes (e.g. in the
-    // G4PhysicalVolumeStore teardown at process exit).
-    struct Tracking::G4Worker {
-        std::thread thread;
-        std::mutex mtx;
-        std::condition_variable cv;
-        HepMC3::GenEvent const* input = nullptr; // guarded by mtx
-        TG4Event result;                         // guarded by mtx
-        bool job_ready = false;
-        bool result_ready = false;
-        bool stop = false;
-        std::exception_ptr init_exception; // set if initialize() threw
-        bool init_failed = false;
+    struct Tracking::Impl {
+        // Configuration captured at construction.
+        std::string physics_list;
+        std::string gdml;
+        std::string macro;
 
-        phlex::configuration config;
+        std::unique_ptr<EDepSim::TrackingService> service;
 
-        // Geant4 objects: created, used and destroyed only on `thread`.
-        std::unique_ptr<GenEventKine> kine;
-        std::unique_ptr<G4RunManager> run_manager;
-        std::unique_ptr<SummaryPersistency> persistency;
-        EDepSim::UserPrimaryGeneratorAction* action = nullptr; // owned by run_manager
+        // The generator that converts each GenEvent to G4 primaries.  It is
+        // OWNED by the service's worker (constructed on the Geant4 thread by the
+        // factory below); we only borrow the pointer to feed it per event.
+        GenEventKine* kine = nullptr;
 
-        void loop();
-        void initialize();
-        TG4Event run_one(HepMC3::GenEvent const& ge);
+        // Serializes feed(ge) + simulate() into one atomic pair, so the event a
+        // simulate() tracks is always the one just fed even if the node is ever
+        // driven concurrently (the module is concurrency::serial today, but the
+        // service itself is re-entrant).
+        std::mutex feed_mutex;
+
+        // Fallback RNG seed source.  simulate() reseeds from the event id and a
+        // zero seed is rejected by Geant4 (CLHEP), so when a GenEvent carries no
+        // event number (0, e.g. from a particle gun) we seed from this instead.
+        unsigned long fallback_seed = 0;
     };
 
-    void Tracking::G4Worker::loop()
+    Tracking::Tracking(phlex::configuration const& config)
+      : impl_(std::make_unique<Impl>())
     {
-        // All Geant4 setup + every beamOn happen on THIS thread, so the
-        // G4ThreadLocal navigator/world belong to the thread that runs them.
-        try {
-            initialize();
-        } catch (...) {
-            std::lock_guard<std::mutex> lk(mtx);
-            init_exception = std::current_exception();
-            init_failed = true;
-        }
-
-        for (;;) {
-            std::unique_lock<std::mutex> lk(mtx);
-            cv.wait(lk, [this] { return job_ready || stop; });
-            if (stop) break;
-
-            HepMC3::GenEvent const* in = input;
-            job_ready = false;
-
-            TG4Event out;
-            if (!init_failed && in) {
-                lk.unlock(); // run Geant4 without holding the lock
-                out = run_one(*in);
-                lk.lock();
-            }
-
-            result = std::move(out);
-            result_ready = true;
-            cv.notify_one();
-        }
-
-        // Empty Geant4's GLOBAL geometry stores HERE, on the worker thread that
-        // BUILT the volumes, so their (main-thread) process-exit static destructors
-        // find nothing to tear down.  Otherwise the main-thread static destructor
-        // of the global G4PhysicalVolumeStore would delete worker-built volumes
-        // cross-thread -> crash in ~G4PVPlacement/GetRotation.  This completes the
-        // "construction + use + destruction all on the worker thread" discipline.
-        // OpenGeometry() is required first because the geometry is closed
-        // (optimized) after /run/initialize.
-        G4GeometryManager::GetInstance()->OpenGeometry();
-        G4PhysicalVolumeStore::Clean();
-        G4LogicalVolumeStore::Clean();
-        G4SolidStore::Clean();
-
-        // The run manager itself is still leaked: ~G4RunManager is separately
-        // crash-prone at teardown and one node lives for the whole process.
-        (void)kine.release();
-        (void)run_manager.release();
-        (void)persistency.release();
+        impl_->physics_list = config.get<std::string>("physics_list", std::string{});
+        impl_->gdml = config.get<std::string>("gdml", std::string{});
+        impl_->macro = config.get<std::string>("macro", std::string{});
     }
 
-    void Tracking::G4Worker::initialize()
-    {
-        // ---- one-time configuration (replaces app/edepSim.cc CLI handling) ----
-        auto const physics_list = config.get<std::string>("physics_list", std::string{});
-        auto const gdml = config.get<std::string>("gdml", std::string{});
-        auto const macro = config.get<std::string>("macro", std::string{});
-
-        // Build the edep-sim run manager.  The physics list is a Geant4
-        // construction-time choice (Q4), not a runtime macro command.
-        run_manager.reset(EDepSim::CreateRunManager(physics_list));
-
-        // Install the (no-ROOT-output) persistency manager whose Store() fills a
-        // TG4Event summary we read after each beamOn (Q5).  NB: this does NOT stop
-        // edep-sim building a TGeoManager during /edep/update (ddm-4nd.1).
-        persistency = std::make_unique<SummaryPersistency>();
-
-        // Approach 4-A (ddm-4nd.9): construct our generator and inject it.  The
-        // action is owned by the run manager; we borrow it.
-        // GetUserPrimaryGeneratorAction() is const, hence the const_cast.
-        kine = std::make_unique<GenEventKine>();
-        action = const_cast<EDepSim::UserPrimaryGeneratorAction*>(
-          static_cast<const EDepSim::UserPrimaryGeneratorAction*>(
-            run_manager->GetUserPrimaryGeneratorAction()));
-        if (!action) {
-            throw std::runtime_error(
-              "edep_sim_phlex::Tracking: run manager has no UserPrimaryGeneratorAction");
-        }
-        action->AddGenerator(kine.get());
-
-        auto* ui = G4UImanager::GetUIpointer();
-
-        // Geometry: build the Geant4 geometry directly from GDML (Q1).
-        // TODO(ddm-4nd.1/.2): source the GDML via a Phlex geometry resource.
-        if (!gdml.empty()) {
-            ui->ApplyCommand("/edep/gdml/read " + gdml);
-        }
-
-        // edep-sim defaults: ionization model, trajectory-save thresholds, etc.
-        ui->ApplyCommand("/edep/control edepsim-defaults 1.0");
-
-        // User-supplied physics-tuning macro text (Q4).
-        // TODO(ddm-4nd.4): validate against reserved-command rules; support importstr.
-        if (!macro.empty()) {
-            apply_macro_text(*ui, macro);
-        }
-
-        // Initialize geometry + physics (triggers /run/initialize).
-        ui->ApplyCommand("/edep/update");
-    }
-
-    TG4Event Tracking::G4Worker::run_one(HepMC3::GenEvent const& ge)
-    {
-        // Feed the event, then run exactly one Geant4 event (the node owns beamOn; Q4).
-        kine->feed_genevent(ge);
-        G4UImanager::GetUIpointer()->ApplyCommand("/run/beamOn 1");
-
-        // The persistency manager's Store() has filled the TG4Event summary; return
-        // a copy as this node's product.  Converting it to the Q5 observables (Arrow
-        // tables) is a separate downstream node (modules/observables.cpp).
-        return persistency->summary();
-    }
-
-    Tracking::Tracking(phlex::configuration const& config) : config_(config) {}
-
-    Tracking::~Tracking()
-    {
-        if (worker_) {
-            if (worker_->thread.joinable()) {
-                {
-                    std::lock_guard<std::mutex> lk(worker_->mtx);
-                    worker_->stop = true;
-                }
-                worker_->cv.notify_one();
-                worker_->thread.join(); // waits for the G4 shutdown on its own thread
-            }
-            delete worker_;
-        }
-    }
+    Tracking::~Tracking() = default; // ~Impl destroys the service (joins worker)
 
     void Tracking::ensure_started()
     {
         std::call_once(started_, [this] {
-            worker_ = new G4Worker();
-            worker_->config = config_;
-            worker_->thread = std::thread([w = worker_] { w->loop(); });
+            impl_->service = std::make_unique<EDepSim::TrackingService>();
+
+            // The factory runs ON the Geant4 thread, so GenEventKine (and any G4
+            // state its construction touches) is bound to that thread.  It
+            // publishes its pointer so operator() can feed it.  initialize()
+            // blocks until this has run, so impl_->kine is set on return.
+            auto holder = std::make_shared<GenEventKine*>(nullptr);
+            impl_->service->initialize(
+              impl_->physics_list, impl_->gdml,
+              EDepSim::GeneratorFactory([holder] {
+                  auto* g = new GenEventKine();
+                  *holder = g;
+                  return g;
+              }),
+              split_lines(impl_->macro));
+            impl_->kine = *holder;
         });
     }
 
@@ -233,20 +110,19 @@ namespace edep_sim_phlex {
     {
         ensure_started();
 
-        TG4Event out;
-        std::exception_ptr ex;
-        {
-            std::unique_lock<std::mutex> lk(worker_->mtx);
-            worker_->input = &ge; // safe: the caller blocks below, so ge outlives the job
-            worker_->job_ready = true;
-            worker_->cv.notify_one();
-            worker_->cv.wait(lk, [w = worker_] { return w->result_ready; });
-            worker_->result_ready = false;
-            out = std::move(worker_->result);
-            ex = worker_->init_exception; // set only if Geant4 init failed
+        // Feed this event and run exactly one Geant4 event on the service's
+        // dedicated thread, blocking for the result.  The id seeds the RNG (a
+        // given id reproduces a given event): use the GenEvent's event number
+        // when it carries one, else a monotonic counter so the seed is never
+        // zero (which Geant4 rejects) and stays reproducible by input order.
+        std::lock_guard<std::mutex> lk(impl_->feed_mutex);
+        impl_->kine->feed_genevent(ge);
+        unsigned long id = static_cast<unsigned long>(ge.event_number());
+        if (id == 0) {
+            id = ++impl_->fallback_seed;
         }
-        if (ex) std::rethrow_exception(ex);
-        return out;
+        auto event = impl_->service->simulate(id);
+        return *event;
     }
 
 } // namespace edep_sim_phlex
