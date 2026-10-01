@@ -7,14 +7,9 @@
 #   target_link_libraries(my_target PRIVATE edep_sim_phlex::edep_sim_phlex)
 
 include(CMakeFindDependencyMacro)
-# spdlog / TBB / fmt must be found BEFORE phlex: phlexConfig.cmake does not
-# find_dependency() them itself but phlexTargets.cmake references their imported
-# targets (see this package's CMakeLists.txt for the full explanation).
+# phlex >= 0.4.1 finds its own dependencies (Boost/TBB/fmt/spdlog/GSL).
 find_dependency(Boost REQUIRED COMPONENTS json)
-find_dependency(TBB REQUIRED)
-find_dependency(spdlog REQUIRED)
-find_dependency(fmt REQUIRED)
-find_dependency(phlex REQUIRED)
+find_dependency(phlex 0.4.1 REQUIRED)
 find_dependency(edep_arrow CONFIG REQUIRED)
 find_dependency(Geant4 REQUIRED)
 find_dependency(EDepSim REQUIRED)

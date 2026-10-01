@@ -7,19 +7,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-# phlex's exported CMake config does NOT find_dependency() its own transitive
-# dependencies, yet phlexTargets.cmake sets INTERFACE_LINK_LIBRARIES on
-# spdlog::spdlog, TBB::tbb and fmt::fmt.  Those imported targets must therefore
-# already exist when phlexTargets.cmake is included, so we find_package() them
-# BEFORE find_package(phlex) -- otherwise its Targets file errors with
-# "target not found".  (wire-cell-phlex only avoids this because it finds TBB
-# explicitly and pulls spdlog transitively via find_package(WireCell).)
+# phlex >= 0.4.1: its CMake config find_dependency()s its own dependencies
+# (Boost json, TBB, fmt, spdlog, Microsoft.GSL), so no pre-finding is needed.
 find_package(Arrow CONFIG REQUIRED)
 find_package(Boost REQUIRED COMPONENTS json)
-find_package(TBB REQUIRED)
-find_package(spdlog REQUIRED)
-find_package(fmt REQUIRED)
-find_package(phlex REQUIRED)
+find_package(phlex 0.4.1 REQUIRED)
+include(GNUInstallDirs)
 find_package(phlex_arrow_common CONFIG REQUIRED)
 find_package(edep_arrow CONFIG REQUIRED)
 find_package(Geant4 REQUIRED)

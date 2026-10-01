@@ -13,6 +13,7 @@
   //   PHLEX_PLUGIN_PATH=<hepmc build>:<edep build>:<view/lib> EDEPSIM_ROOT=<edepsim prefix> \
   //     phlex -c smoke-gun-tracking.jsonnet
 
+  stage: 'sim',  // the job's stage name (required since Phlex 0.4)
   driver: {
     cpp: 'generate_layers',
     layers: {

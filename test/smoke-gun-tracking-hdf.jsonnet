@@ -13,6 +13,7 @@
   //   PHLEX_PLUGIN_PATH=<hepmc>:<edep>:<phlex-arrow-hdf>:<view/lib> EDEPSIM_ROOT=<edepsim> \
   //     phlex -c smoke-gun-tracking-hdf.jsonnet
 
+  stage: 'sim',  // the job's stage name (required since Phlex 0.4)
   driver: {
     cpp: 'generate_layers',
     layers: {
